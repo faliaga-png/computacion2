@@ -479,4 +479,29 @@ despacio de lo que se ejecutan.
 
 ## 7. Lo que aprendí
 
-> *(Completar con 2-3 párrafos propios.)*
+Lo que más me sirvió fue la medición del event loop bloqueado. Sabía que asyncio
+"no sirve para CPU-bound", pero no terminaba de entender por qué hasta que vi que
+un `GET /tareas` tardaba 6 segundos en responder mientras corría un hash. Y no
+era lenta: la API directamente no se ejecutaba, porque una función sin `await`
+nunca le devuelve el control al loop. Ahí me cerró que una corrutina es parecida
+a un generador: sólo cede el control en los puntos donde se suspende, y si no hay
+ninguno, nadie más puede avanzar. Por eso `time.sleep()` dentro de una corrutina
+es un error y `asyncio.sleep()` no.
+
+También entendí que cada tipo de tarea tiene su propio techo. Para las tareas de
+I/O, sumar workers es casi gratis, porque una corrutina que espera un socket no
+gasta CPU. Pasar de 24 a menos de 2 segundos en las 20 descargas sin agregar
+ningún thread muestra lo que el event loop hereda de `select`/`epoll`. Para el
+hash, en cambio, agregar workers no cambiaba nada: el límite eran los núcleos, y
+por el GIL hubo que usar procesos y no threads. Y cuando subí a miles de tareas
+apareció un tercer límite que no esperaba: el único hilo que atiende todo el
+HTTP. Medir me mostró cosas que no hubiera supuesto, como los errores 429 del
+servidor remoto cuando le pedía 20 descargas a la vez.
+
+Por último, aprendí que cancelar bien es más difícil que ejecutar. Hubo que
+separar cada tarea en su propia `asyncio.Task` para poder cancelarla sin matar al
+worker, distinguir quién pidió la cancelación, y asegurarse de que `task_done()`
+se llame siempre para que el apagado no quede colgado. También descubrí que hay
+cosas que no se pueden cancelar: un hash que ya está corriendo en otro proceso
+sigue hasta terminar. Me quedó claro que en programación concurrente hay que
+pensar tanto en cómo terminan las tareas como en cómo empiezan.
